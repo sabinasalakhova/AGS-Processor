@@ -170,15 +170,7 @@ elif st.session_state.page == 'AGS to Excel':
         accept_multiple_files=True,
         key='ags_files'
     )
-    if uploaded_file:
-    file_data = uploaded_file.read()  # Reads file as bytes
-    print(f"type(file_data): {type(file_data)}")  # Expect <class 'bytes'>
-    try:
-        parsed_data = parse_ags_file(file_data)  # Pass bytes to AGS parser
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-        st.stop()
- 
+    
     if uploaded_files:
         st.success(f"✅ {len(uploaded_files)} file(s) selected")
         

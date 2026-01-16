@@ -52,9 +52,20 @@ def AGS4_to_dict(filepath_or_buffer, encoding='utf-8'):
     else:
         # Handle uploaded file objects from Streamlit
         if hasattr(filepath_or_buffer, 'read'):
+            # Reset file pointer if it has a seek method (e.g., Streamlit UploadedFile)
+            if hasattr(filepath_or_buffer, 'seek'):
+                filepath_or_buffer.seek(0)
+            
             content = filepath_or_buffer.read()
+            
+            # Decode bytes to string if necessary
             if isinstance(content, bytes):
                 content = content.decode(encoding, errors="replace")
+            
+            # Reset file pointer again for potential reuse
+            if hasattr(filepath_or_buffer, 'seek'):
+                filepath_or_buffer.seek(0)
+            
             f = StringIO(content)
             close_file = False
         else:
