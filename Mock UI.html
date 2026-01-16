@@ -184,101 +184,6 @@
             gap: 10px;
         }
 
-        /* Warning and Status Areas */
-        .status-panel {
-            background-color: var(--light-green-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 10px;
-            margin-bottom: 10px;
-        }
-
-        .status-metrics {
-            display: flex;
-            gap: 20px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-        }
-
-        .metric-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            padding: 8px 16px;
-            background-color: white;
-            border-radius: 4px;
-            border: 1px solid var(--border-color);
-        }
-
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: var(--dark-green);
-        }
-
-        .metric-label {
-            font-size: 0.8rem;
-            color: var(--font-color);
-        }
-
-        .warnings-container {
-            max-height: 150px;
-            overflow-y: auto;
-            background-color: white;
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 8px;
-            display: none; /* Hidden by default */
-        }
-
-        .warnings-container.show {
-            display: block;
-        }
-
-        .warning-item {
-            padding: 6px;
-            margin: 4px 0;
-            border-radius: 3px;
-            font-size: 0.9rem;
-        }
-
-        .warning-item.error {
-            background-color: #ffebee;
-            border-left: 3px solid #d32f2f;
-            color: #c62828;
-        }
-
-        .warning-item.warning {
-            background-color: #fff3e0;
-            border-left: 3px solid #f57c00;
-            color: #e65100;
-        }
-
-        .warning-item.info {
-            background-color: #e3f2fd;
-            border-left: 3px solid #1976d2;
-            color: #0d47a1;
-        }
-
-        .validation-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 3px;
-            font-size: 0.75rem;
-            font-weight: bold;
-            margin-left: 8px;
-        }
-
-        .validation-badge.valid {
-            background-color: #c8e6c9;
-            color: #2e7d32;
-        }
-
-        .validation-badge.invalid {
-            background-color: #ffcdd2;
-            color: #c62828;
-        }
-
     </style>
 </head>
 <body>
@@ -300,16 +205,6 @@
             </div>
             <button id="viewDataBtn" class="ags-button">View Data</button>
             <button class="ags-button">Combine Data</button>
-        </div>
-
-        <!-- Status Panel for Data Quality Metrics -->
-        <div class="status-panel" id="statusPanel" style="display: none;">
-            <div class="status-metrics" id="statusMetrics">
-                <!-- Metrics will be populated here -->
-            </div>
-            <div class="warnings-container" id="warningsContainer">
-                <!-- Warnings will be populated here -->
-            </div>
         </div>
 
         <div class="data-table-container">
@@ -375,15 +270,6 @@
         const fileNameInput = document.getElementById('fileName');
         const viewDataBtn = document.getElementById('viewDataBtn');
         const tableBody = document.getElementById('tableBody');
-        const statusPanel = document.getElementById('statusPanel');
-        const statusMetrics = document.getElementById('statusMetrics');
-        const warningsContainer = document.getElementById('warningsContainer');
-
-        // Data quality tracking
-        let dataQuality = {
-            warnings: [],
-            metrics: {}
-        };
 
         // Update the text input when a file is chosen
         fileBrowse.addEventListener('change', () => {
@@ -396,125 +282,6 @@
 
         // Add click listener to the "View Data" button
         viewDataBtn.addEventListener('click', displayExcelData);
-
-        /**
-         * Validate loaded data and generate warnings
-         */
-        function validateData(jsonData) {
-            dataQuality = { warnings: [], metrics: {} };
-            
-            if (jsonData.length <= 1) {
-                dataQuality.warnings.push({
-                    severity: 'error',
-                    message: 'No data rows found in file'
-                });
-                return;
-            }
-
-            const headers = jsonData[0];
-            const dataRows = jsonData.slice(1);
-            
-            // Check for required columns
-            const requiredColumns = ['HOLE_ID', 'DEPTH_FROM', 'DEPTH_TO'];
-            const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-            
-            if (missingColumns.length > 0) {
-                dataQuality.warnings.push({
-                    severity: 'error',
-                    message: `Missing required columns: ${missingColumns.join(', ')}`
-                });
-            }
-
-            // Validate depth data
-            const holeIdIndex = headers.indexOf('HOLE_ID');
-            const depthFromIndex = headers.indexOf('DEPTH_FROM');
-            const depthToIndex = headers.indexOf('DEPTH_TO');
-            
-            let invalidDepths = 0;
-            let zeroIntervals = 0;
-            let negativeIntervals = 0;
-            
-            dataRows.forEach((row, idx) => {
-                if (depthFromIndex !== -1 && depthToIndex !== -1) {
-                    const depthFrom = parseFloat(row[depthFromIndex]);
-                    const depthTo = parseFloat(row[depthToIndex]);
-                    
-                    if (isNaN(depthFrom) || isNaN(depthTo)) {
-                        invalidDepths++;
-                    } else {
-                        if (depthTo === depthFrom) {
-                            zeroIntervals++;
-                        } else if (depthTo < depthFrom) {
-                            negativeIntervals++;
-                        }
-                    }
-                }
-            });
-
-            // Add warnings based on validation
-            if (invalidDepths > 0) {
-                dataQuality.warnings.push({
-                    severity: 'warning',
-                    message: `${invalidDepths} rows have invalid depth values`
-                });
-            }
-
-            if (zeroIntervals > 0) {
-                dataQuality.warnings.push({
-                    severity: 'warning',
-                    message: `${zeroIntervals} rows have zero-length depth intervals`
-                });
-            }
-
-            if (negativeIntervals > 0) {
-                dataQuality.warnings.push({
-                    severity: 'error',
-                    message: `${negativeIntervals} rows have negative depth intervals (DEPTH_TO < DEPTH_FROM)`
-                });
-            }
-
-            // Set metrics
-            dataQuality.metrics = {
-                'Total Rows': dataRows.length,
-                'Columns': headers.length,
-                'Unique Boreholes': new Set(dataRows.map(row => row[holeIdIndex])).size,
-                'Data Quality': dataQuality.warnings.length === 0 ? 'Good' : 'Issues Found'
-            };
-        }
-
-        /**
-         * Display data quality metrics and warnings
-         */
-        function displayDataQuality() {
-            // Clear previous content
-            statusMetrics.innerHTML = '';
-            warningsContainer.innerHTML = '';
-
-            // Display metrics
-            for (const [key, value] of Object.entries(dataQuality.metrics)) {
-                const metricDiv = document.createElement('div');
-                metricDiv.className = 'metric-item';
-                metricDiv.innerHTML = `
-                    <div class="metric-value">${value}</div>
-                    <div class="metric-label">${key}</div>
-                `;
-                statusMetrics.appendChild(metricDiv);
-            }
-
-            // Display warnings
-            if (dataQuality.warnings.length > 0) {
-                warningsContainer.classList.add('show');
-                dataQuality.warnings.forEach(warning => {
-                    const warningDiv = document.createElement('div');
-                    warningDiv.className = `warning-item ${warning.severity}`;
-                    warningDiv.textContent = warning.message;
-                    warningsContainer.appendChild(warningDiv);
-                });
-            }
-
-            // Show status panel
-            statusPanel.style.display = 'block';
-        }
 
         /**
          * Reads the selected Excel file and populates the HTML table.
@@ -536,9 +303,6 @@
                     
                     // Convert sheet to JSON. `defval: ''` ensures empty cells are treated as empty strings.
                     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-                    // Validate the data
-                    validateData(jsonData);
 
                     // Clear existing table data
                     tableBody.innerHTML = '';
@@ -567,19 +331,9 @@
                         tableBody.appendChild(row);
                     });
 
-                    // Display data quality information
-                    displayDataQuality();
-
                 } catch (error) {
                     console.error("Error processing Excel file:", error);
                     alert("Failed to process the Excel file. Please ensure it's a valid .xlsx or .xls file.");
-                    
-                    // Show error in status panel
-                    dataQuality.warnings.push({
-                        severity: 'error',
-                        message: `File processing error: ${error.message}`
-                    });
-                    displayDataQuality();
                 }
             };
 
