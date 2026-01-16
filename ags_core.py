@@ -82,6 +82,23 @@ def AGS4_to_dict(filepath_or_buffer, encoding='utf-8'):
                 filepath_or_buffer.seek(0)
             f = StringIO(content)
             close_file = False
+        elif not hasattr(filepath_or_buffer, 'mode'):
+            # No mode attribute - could be Streamlit UploadedFile or similar
+            # Read content and check if it's bytes or text
+            if hasattr(filepath_or_buffer, 'seek'):
+                filepath_or_buffer.seek(0)
+            
+            content = filepath_or_buffer.read()
+            
+            if isinstance(content, bytes):
+                # It's binary, decode it
+                content = content.decode(encoding, errors="replace")
+            
+            if hasattr(filepath_or_buffer, 'seek'):
+                filepath_or_buffer.seek(0)
+            
+            f = StringIO(content)
+            close_file = False
         else:
             # It's already a text file object, use it directly
             f = filepath_or_buffer
