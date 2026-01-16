@@ -46,31 +46,70 @@ def AGS4_to_dict(filepath_or_buffer, encoding='utf-8'):
     headings : dict
         Dictionary with the headings in each GROUP
     """
-    if is_file_like(filepath_or_buffer):
-        f = filepath_or_buffer
+    # Handle different input types
+    close_file = False
+    
+    # Check if it's a BytesIO or similar binary file object
+    if isinstance(filepath_or_buffer, BytesIO):
+        # Reset file pointer if it has a seek method
+        if hasattr(filepath_or_buffer, 'seek'):
+            filepath_or_buffer.seek(0)
+        
+        content = filepath_or_buffer.read()
+        
+        # Decode bytes to string
+        if isinstance(content, bytes):
+            content = content.decode(encoding, errors="replace")
+        
+        # Reset file pointer again for potential reuse
+        if hasattr(filepath_or_buffer, 'seek'):
+            filepath_or_buffer.seek(0)
+        
+        f = StringIO(content)
         close_file = False
-    else:
-        # Handle uploaded file objects from Streamlit
-        if hasattr(filepath_or_buffer, 'read'):
-            # Reset file pointer if it has a seek method (e.g., Streamlit UploadedFile)
+    
+    # Check if it's already a StringIO or text file object
+    elif is_file_like(filepath_or_buffer):
+        # Check if it's a binary mode file by trying to read a byte
+        if hasattr(filepath_or_buffer, 'mode') and 'b' in filepath_or_buffer.mode:
+            # It's a binary file, read and decode
             if hasattr(filepath_or_buffer, 'seek'):
                 filepath_or_buffer.seek(0)
-            
             content = filepath_or_buffer.read()
-            
-            # Decode bytes to string if necessary
             if isinstance(content, bytes):
                 content = content.decode(encoding, errors="replace")
-            
-            # Reset file pointer again for potential reuse
             if hasattr(filepath_or_buffer, 'seek'):
                 filepath_or_buffer.seek(0)
-            
             f = StringIO(content)
             close_file = False
         else:
-            f = open(filepath_or_buffer, "r", encoding=encoding, errors="replace")
-            close_file = True
+            # It's already a text file object, use it directly
+            f = filepath_or_buffer
+            close_file = False
+    
+    # Handle Streamlit UploadedFile and other objects with read() method
+    elif hasattr(filepath_or_buffer, 'read'):
+        # Reset file pointer if it has a seek method (e.g., Streamlit UploadedFile)
+        if hasattr(filepath_or_buffer, 'seek'):
+            filepath_or_buffer.seek(0)
+        
+        content = filepath_or_buffer.read()
+        
+        # Decode bytes to string if necessary
+        if isinstance(content, bytes):
+            content = content.decode(encoding, errors="replace")
+        
+        # Reset file pointer again for potential reuse
+        if hasattr(filepath_or_buffer, 'seek'):
+            filepath_or_buffer.seek(0)
+        
+        f = StringIO(content)
+        close_file = False
+    
+    # It's a file path string
+    else:
+        f = open(filepath_or_buffer, "r", encoding=encoding, errors="replace")
+        close_file = True
 
     try:
         data = {}
