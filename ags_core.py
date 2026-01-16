@@ -49,79 +49,44 @@ def AGS4_to_dict(filepath_or_buffer, encoding='utf-8'):
     # Handle different input types
     close_file = False
     
-    # Check if it's a BytesIO or similar binary file object
-    if isinstance(filepath_or_buffer, BytesIO):
-        # Reset file pointer if it has a seek method
-        if hasattr(filepath_or_buffer, 'seek'):
-            filepath_or_buffer.seek(0)
+    # Check if it's a file-like object (has read/write and is iterable)
+    if is_file_like(filepath_or_buffer) or hasattr(filepath_or_buffer, 'read'):
+        # Determine if we need to read and decode the content
+        need_to_read = False
         
-        content = filepath_or_buffer.read()
-        
-        # Decode bytes to string
-        if isinstance(content, bytes):
-            content = content.decode(encoding, errors="replace")
-        
-        # Reset file pointer again for potential reuse
-        if hasattr(filepath_or_buffer, 'seek'):
-            filepath_or_buffer.seek(0)
-        
-        f = StringIO(content)
-        close_file = False
-    
-    # Check if it's already a StringIO or text file object
-    elif is_file_like(filepath_or_buffer):
-        # Check if it's a binary mode file by trying to read a byte
-        if hasattr(filepath_or_buffer, 'mode') and 'b' in filepath_or_buffer.mode:
-            # It's a binary file, read and decode
-            if hasattr(filepath_or_buffer, 'seek'):
-                filepath_or_buffer.seek(0)
-            content = filepath_or_buffer.read()
-            if isinstance(content, bytes):
-                content = content.decode(encoding, errors="replace")
-            if hasattr(filepath_or_buffer, 'seek'):
-                filepath_or_buffer.seek(0)
-            f = StringIO(content)
-            close_file = False
+        # BytesIO objects always need to be read
+        if isinstance(filepath_or_buffer, BytesIO):
+            need_to_read = True
+        # Binary mode files need to be read
+        elif hasattr(filepath_or_buffer, 'mode') and 'b' in filepath_or_buffer.mode:
+            need_to_read = True
+        # Objects without mode attribute (like Streamlit UploadedFile) need to be read
         elif not hasattr(filepath_or_buffer, 'mode'):
-            # No mode attribute - could be Streamlit UploadedFile or similar
-            # Read content and check if it's bytes or text
+            need_to_read = True
+        
+        if need_to_read:
+            # Reset file pointer if possible
             if hasattr(filepath_or_buffer, 'seek'):
                 filepath_or_buffer.seek(0)
             
+            # Read content
             content = filepath_or_buffer.read()
             
+            # Decode bytes to string if necessary
             if isinstance(content, bytes):
-                # It's binary, decode it
                 content = content.decode(encoding, errors="replace")
             
+            # Reset file pointer for potential reuse
             if hasattr(filepath_or_buffer, 'seek'):
                 filepath_or_buffer.seek(0)
             
+            # Create StringIO for iteration
             f = StringIO(content)
             close_file = False
         else:
             # It's already a text file object, use it directly
             f = filepath_or_buffer
             close_file = False
-    
-    # Handle Streamlit UploadedFile and other objects with read() method
-    elif hasattr(filepath_or_buffer, 'read'):
-        # Reset file pointer if it has a seek method (e.g., Streamlit UploadedFile)
-        if hasattr(filepath_or_buffer, 'seek'):
-            filepath_or_buffer.seek(0)
-        
-        content = filepath_or_buffer.read()
-        
-        # Decode bytes to string if necessary
-        if isinstance(content, bytes):
-            content = content.decode(encoding, errors="replace")
-        
-        # Reset file pointer again for potential reuse
-        if hasattr(filepath_or_buffer, 'seek'):
-            filepath_or_buffer.seek(0)
-        
-        f = StringIO(content)
-        close_file = False
     
     # It's a file path string
     else:
