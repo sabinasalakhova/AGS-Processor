@@ -8,6 +8,77 @@ These functions are called by the Streamlit interface.
 import pandas as pd
 import numpy as np
 from io import BytesIO, StringIO
+import warnings
+from typing import List, Dict, Tuple, Any, Optional
+
+# ============================================================================
+# DATA QUALITY AND WARNING SYSTEM
+# ============================================================================
+
+class DataQualityWarning:
+    """Class to collect and manage data quality warnings throughout processing."""
+    
+    def __init__(self):
+        self.warnings = []
+        self.metrics = {}
+    
+    def add_warning(self, category: str, message: str, severity: str = "WARNING"):
+        """Add a warning message.
+        
+        Parameters
+        ----------
+        category : str
+            Category of warning (e.g., 'DATA_LOSS', 'VALIDATION', 'MISSING_COLUMN')
+        message : str
+            Descriptive warning message
+        severity : str
+            Severity level ('INFO', 'WARNING', 'ERROR')
+        """
+        self.warnings.append({
+            'severity': severity,
+            'category': category,
+            'message': message
+        })
+    
+    def add_metric(self, key: str, value: Any):
+        """Add a data quality metric.
+        
+        Parameters
+        ----------
+        key : str
+            Metric name
+        value : Any
+            Metric value
+        """
+        self.metrics[key] = value
+    
+    def get_warnings(self) -> List[Dict]:
+        """Return all warnings."""
+        return self.warnings
+    
+    def get_metrics(self) -> Dict:
+        """Return all metrics."""
+        return self.metrics
+    
+    def has_warnings(self) -> bool:
+        """Check if any warnings were recorded."""
+        return len(self.warnings) > 0
+    
+    def print_summary(self):
+        """Print a summary of warnings and metrics."""
+        if self.warnings:
+            print(f"\n{'='*60}")
+            print(f"DATA QUALITY WARNINGS ({len(self.warnings)} total)")
+            print(f"{'='*60}")
+            for w in self.warnings:
+                print(f"[{w['severity']}] {w['category']}: {w['message']}")
+        
+        if self.metrics:
+            print(f"\n{'='*60}")
+            print(f"DATA QUALITY METRICS")
+            print(f"{'='*60}")
+            for key, value in self.metrics.items():
+                print(f"{key}: {value}")
 
 # ============================================================================
 # AGS FILE PARSING FUNCTIONS
@@ -170,14 +241,26 @@ def AGS4_to_dataframe(filepath_or_buffer, encoding='utf-8'):
 
     # Convert to dictionary of Pandas dataframes
     df = {}
+    skipped_groups = []
+    
     for key in data:
         try:
             table = pd.DataFrame(data[key])
             table[1:] = table[1:].apply(pd.to_numeric, errors='ignore')
             df[key] = table
-        except ValueError:
-            print(f'Warning: {key} is not exported')
+        except ValueError as e:
+            # Log which group failed and why
+            skipped_groups.append(key)
+            print(f'Warning: {key} is not exported due to ValueError: {str(e)}')
             continue
+        except Exception as e:
+            # Catch other exceptions with specific error info
+            skipped_groups.append(key)
+            print(f'Warning: {key} is not exported due to {type(e).__name__}: {str(e)}')
+            continue
+    
+    if skipped_groups:
+        print(f'Total groups skipped: {len(skipped_groups)} - {", ".join(skipped_groups)}')
     
     # Handle exceptions for group names
     if "?ETH" in df:
@@ -212,8 +295,11 @@ def concat_ags_files(uploaded_files, giu_number):
     -------
     dict
         Dictionary of dataframes, one per sheet/group
+    data_warnings : DataQualityWarning
+        Data quality warnings and metrics
     """
     result_dict = {}
+    data_warnings = DataQualityWarning()
     
     # Define standard groups
     group_list = ['PROJ', 'HOLE', 'GEOL', 'WETH', 'CORE', 'FRAC', 'DETL', 'ISPT', 
@@ -226,27 +312,175 @@ def concat_ags_files(uploaded_files, giu_number):
     for group in group_list:
         result_dict[group] = pd.DataFrame()
     
+    # Track metrics
+    total_files_processed = 0
+    total_groups_found = set()
+    
     # Process each file
     for file in uploaded_files:
-        df_dict, headings = AGS4_to_dataframe(file)
-        
-        # Add GIU_NO column and AGS_FILE column
-        for group in df_dict:
-            if group in result_dict:
-                df_dict[group]['GIU_NO'] = giu_number
-                df_dict[group]['AGS_FILE'] = file.name
-                # Concatenate with existing data
-                result_dict[group] = pd.concat([result_dict[group], df_dict[group]], ignore_index=True)
+        try:
+            df_dict, headings = AGS4_to_dataframe(file)
+            total_files_processed += 1
+            
+            # Add GIU_NO column and AGS_FILE column
+            for group in df_dict:
+                total_groups_found.add(group)
+                if group in result_dict:
+                    df_dict[group]['GIU_NO'] = giu_number
+                    df_dict[group]['AGS_FILE'] = file.name
+                    # Concatenate with existing data
+                    result_dict[group] = pd.concat([result_dict[group], df_dict[group]], ignore_index=True)
+                else:
+                    data_warnings.add_warning(
+                        'NON_STANDARD_GROUP',
+                        f"Group '{group}' found in {file.name} is not in standard group list and will be skipped",
+                        'WARNING'
+                    )
+        except Exception as e:
+            data_warnings.add_warning(
+                'FILE_PROCESSING_ERROR',
+                f"Failed to process file {file.name}: {str(e)}",
+                'ERROR'
+            )
+    
+    # Track empty groups before removal
+    empty_groups = [k for k, v in result_dict.items() if v.empty]
+    if empty_groups:
+        data_warnings.add_warning(
+            'EMPTY_GROUPS',
+            f"The following groups have no data and will be excluded: {', '.join(empty_groups)}",
+            'INFO'
+        )
     
     # Remove empty dataframes
     result_dict = {k: v for k, v in result_dict.items() if not v.empty}
     
-    return result_dict
+    # Add metrics
+    data_warnings.add_metric('files_processed', total_files_processed)
+    data_warnings.add_metric('total_files', len(uploaded_files))
+    data_warnings.add_metric('groups_found', len(total_groups_found))
+    data_warnings.add_metric('groups_with_data', len(result_dict))
+    
+    return result_dict, data_warnings
 
 
 # ============================================================================
-# AGS COMBINATION FUNCTION
+# AGS COMBINATION FUNCTION - REFACTORED WITH DATA QUALITY TRACKING
 # ============================================================================
+
+def _create_depth_intervals(all_depths, borehole_id):
+    """
+    Helper function to create depth intervals from a list of depths.
+    
+    Parameters
+    ----------
+    all_depths : list
+        List of all depth points
+    borehole_id : str
+        Borehole identifier for logging
+    
+    Returns
+    -------
+    depth_from : list
+        List of interval start depths
+    depth_to : list
+        List of interval end depths
+    warnings : list
+        List of warning messages
+    """
+    warnings = []
+    
+    # First check the original data for ordering issues and duplicates
+    # before any processing
+    if len(all_depths) > 1:
+        # Check for duplicates in original data
+        original_duplicates = [d for d in set(all_depths) if all_depths.count(d) > 1]
+        if original_duplicates:
+            warnings.append(f"Borehole {borehole_id}: Found duplicate depths in source data: {original_duplicates}")
+        
+        # Check for ordering issues in original data
+        sorted_depths = sorted([x for x in all_depths if str(x) != 'nan'])
+        original_depths = [x for x in all_depths if str(x) != 'nan']
+        if sorted_depths != original_depths and len(sorted_depths) == len(original_depths):
+            warnings.append(f"Borehole {borehole_id}: Depths in source data are not in sequential order")
+    
+    # Remove NaN values and create unique sorted depths
+    depths = list(set(all_depths))
+    depths.sort()
+    depth = [x for x in depths if str(x) != 'nan']
+    depth.sort()
+    
+    if len(depth) < 2:
+        warnings.append(f"Borehole {borehole_id}: Insufficient depth points ({len(depth)} found, minimum 2 required) - SKIPPED")
+        return None, None, warnings
+    
+    depth_from = depth[0:-1]
+    depth_to = depth[1:]
+    
+    # Check for zero-length intervals (shouldn't happen after set() but check anyway)
+    zero_intervals = [(depth_from[i], depth_to[i]) for i in range(len(depth_from)) 
+                      if depth_to[i] - depth_from[i] <= 0]
+    if zero_intervals:
+        warnings.append(f"Borehole {borehole_id}: Found {len(zero_intervals)} zero or negative length intervals")
+    
+    return depth_from, depth_to, warnings
+
+
+def _extract_depths_from_group(group_dict, group_name, hole_id, giu_no, top_col, base_col):
+    """
+    Helper function to extract depths from a specific group.
+    
+    Parameters
+    ----------
+    group_dict : dict
+        Dictionary of dataframes
+    group_name : str
+        Name of the group (e.g., 'CORE', 'GEOL')
+    hole_id : str
+        Hole ID
+    giu_no : str
+        GIU number
+    top_col : str
+        Name of top depth column
+    base_col : str
+        Name of base depth column
+    
+    Returns
+    -------
+    depths : list
+        List of depth values
+    has_data : bool
+        Whether data was found
+    warnings : list
+        List of warning messages
+    """
+    depths = []
+    warnings = []
+    has_data = False
+    
+    if group_name not in group_dict or group_dict[group_name].empty:
+        return depths, has_data, warnings
+    
+    data = group_dict[group_name][(group_dict[group_name]['HOLE_ID'] == hole_id) & 
+                                   (group_dict[group_name]['GIU_NO'] == giu_no)]
+    
+    if data.empty:
+        return depths, has_data, warnings
+    
+    if top_col not in data.columns:
+        warnings.append(f"Group {group_name}: Missing column '{top_col}' for borehole {hole_id}")
+        return depths, has_data, warnings
+    
+    if base_col not in data.columns:
+        warnings.append(f"Group {group_name}: Missing column '{base_col}' for borehole {hole_id}")
+        return depths, has_data, warnings
+    
+    depths.extend(list(data[top_col].values))
+    depths.extend(list(data[base_col].values))
+    has_data = True
+    
+    return depths, has_data, warnings
+
 
 def combine_ags_data(uploaded_excel_files, selected_groups=None):
     """
@@ -263,7 +497,11 @@ def combine_ags_data(uploaded_excel_files, selected_groups=None):
     -------
     pd.DataFrame
         Combined dataframe
+    data_warnings : DataQualityWarning
+        Data quality warnings and metrics
     """
+    data_warnings = DataQualityWarning()
+    
     if selected_groups is None or len(selected_groups) == 0:
         group_list = ['HOLE', 'CORE', 'DETL', 'WETH', 'FRAC', 'GEOL']
     else:
@@ -277,75 +515,126 @@ def combine_ags_data(uploaded_excel_files, selected_groups=None):
     ])
     
     row_index = 0
+    total_boreholes = 0
+    processed_boreholes = 0
+    skipped_boreholes = 0
+    total_files = len(uploaded_excel_files)
     
-    for file in uploaded_excel_files:
+    for file_idx, file in enumerate(uploaded_excel_files):
         # Read separate sheets for each file
         group_dict = {}
+        missing_groups = []
+        
         for g in group_list:
             try:
                 group_dict[g] = pd.read_excel(file, sheet_name=g)
-            except:
+            except Exception as e:
                 group_dict[g] = pd.DataFrame()
+                missing_groups.append(g)
+        
+        if missing_groups:
+            data_warnings.add_warning(
+                'MISSING_GROUPS',
+                f"File {getattr(file, 'name', f'file_{file_idx}')}: Missing or empty groups: {', '.join(missing_groups)}",
+                'WARNING'
+            )
         
         if 'HOLE' not in group_dict or group_dict['HOLE'].empty:
+            data_warnings.add_warning(
+                'MISSING_HOLE_DATA',
+                f"File {getattr(file, 'name', f'file_{file_idx}')}: No HOLE data found - skipping file",
+                'ERROR'
+            )
             continue
         
         GIU_HOLE_ID_list = group_dict['HOLE']['GIU_NO'].astype(str) + "_" + group_dict['HOLE']['HOLE_ID']
+        total_boreholes += len(GIU_HOLE_ID_list)
         
         # Process each borehole
         for bh in range(len(GIU_HOLE_ID_list)):
             GIU_NO_bh = group_dict['HOLE'].loc[bh, 'GIU_NO']
             HOLE_ID_bh = group_dict['HOLE'].loc[bh, 'HOLE_ID']
+            borehole_id = f"{GIU_NO_bh}_{HOLE_ID_bh}"
             
             # Get combined depths from all selected groups
             all_depths = []
+            borehole_warnings = []
+            groups_with_data = []
             
-            if 'CORE' in group_list and 'CORE' in group_dict:
-                core_data = group_dict['CORE'][(group_dict['CORE']['HOLE_ID'] == HOLE_ID_bh) & 
-                                                (group_dict['CORE']['GIU_NO'] == GIU_NO_bh)]
-                if not core_data.empty and 'CORE_TOP' in core_data.columns and 'CORE_BOT' in core_data.columns:
-                    all_depths.extend(list(core_data['CORE_TOP'].values))
-                    all_depths.extend(list(core_data['CORE_BOT'].values))
+            # Extract depths from each group
+            if 'CORE' in group_list:
+                depths, has_data, warnings = _extract_depths_from_group(
+                    group_dict, 'CORE', HOLE_ID_bh, GIU_NO_bh, 'CORE_TOP', 'CORE_BOT'
+                )
+                all_depths.extend(depths)
+                borehole_warnings.extend(warnings)
+                if has_data:
+                    groups_with_data.append('CORE')
             
-            if 'DETL' in group_list and 'DETL' in group_dict:
-                detl_data = group_dict['DETL'][(group_dict['DETL']['HOLE_ID'] == HOLE_ID_bh) & 
-                                                (group_dict['DETL']['GIU_NO'] == GIU_NO_bh)]
-                if not detl_data.empty and 'DETL_TOP' in detl_data.columns and 'DETL_BASE' in detl_data.columns:
-                    all_depths.extend(list(detl_data['DETL_TOP'].values))
-                    all_depths.extend(list(detl_data['DETL_BASE'].values))
+            if 'DETL' in group_list:
+                depths, has_data, warnings = _extract_depths_from_group(
+                    group_dict, 'DETL', HOLE_ID_bh, GIU_NO_bh, 'DETL_TOP', 'DETL_BASE'
+                )
+                all_depths.extend(depths)
+                borehole_warnings.extend(warnings)
+                if has_data:
+                    groups_with_data.append('DETL')
             
-            if 'FRAC' in group_list and 'FRAC' in group_dict:
-                frac_data = group_dict['FRAC'][(group_dict['FRAC']['HOLE_ID'] == HOLE_ID_bh) & 
-                                                (group_dict['FRAC']['GIU_NO'] == GIU_NO_bh)]
-                if not frac_data.empty and 'FRAC_TOP' in frac_data.columns and 'FRAC_BASE' in frac_data.columns:
-                    all_depths.extend(list(frac_data['FRAC_TOP'].values))
-                    all_depths.extend(list(frac_data['FRAC_BASE'].values))
+            if 'FRAC' in group_list:
+                depths, has_data, warnings = _extract_depths_from_group(
+                    group_dict, 'FRAC', HOLE_ID_bh, GIU_NO_bh, 'FRAC_TOP', 'FRAC_BASE'
+                )
+                all_depths.extend(depths)
+                borehole_warnings.extend(warnings)
+                if has_data:
+                    groups_with_data.append('FRAC')
             
-            if 'GEOL' in group_list and 'GEOL' in group_dict:
-                geol_data = group_dict['GEOL'][(group_dict['GEOL']['HOLE_ID'] == HOLE_ID_bh) & 
-                                                (group_dict['GEOL']['GIU_NO'] == GIU_NO_bh)]
-                if not geol_data.empty and 'GEOL_TOP' in geol_data.columns and 'GEOL_BASE' in geol_data.columns:
-                    all_depths.extend(list(geol_data['GEOL_TOP'].values))
-                    all_depths.extend(list(geol_data['GEOL_BASE'].values))
+            if 'GEOL' in group_list:
+                depths, has_data, warnings = _extract_depths_from_group(
+                    group_dict, 'GEOL', HOLE_ID_bh, GIU_NO_bh, 'GEOL_TOP', 'GEOL_BASE'
+                )
+                all_depths.extend(depths)
+                borehole_warnings.extend(warnings)
+                if has_data:
+                    groups_with_data.append('GEOL')
             
-            if 'WETH' in group_list and 'WETH' in group_dict:
-                weth_data = group_dict['WETH'][(group_dict['WETH']['HOLE_ID'] == HOLE_ID_bh) & 
-                                                (group_dict['WETH']['GIU_NO'] == GIU_NO_bh)]
-                if not weth_data.empty and 'WETH_TOP' in weth_data.columns and 'WETH_BASE' in weth_data.columns:
-                    all_depths.extend(list(weth_data['WETH_TOP'].values))
-                    all_depths.extend(list(weth_data['WETH_BASE'].values))
+            if 'WETH' in group_list:
+                depths, has_data, warnings = _extract_depths_from_group(
+                    group_dict, 'WETH', HOLE_ID_bh, GIU_NO_bh, 'WETH_TOP', 'WETH_BASE'
+                )
+                all_depths.extend(depths)
+                borehole_warnings.extend(warnings)
+                if has_data:
+                    groups_with_data.append('WETH')
             
-            # Create unique sorted depths
-            depths = list(set(all_depths))
-            depths.sort()
-            depth = [x for x in depths if str(x) != 'nan']
-            depth.sort()
+            # Create depth intervals
+            depth_from, depth_to, interval_warnings = _create_depth_intervals(all_depths, borehole_id)
+            borehole_warnings.extend(interval_warnings)
             
-            if len(depth) < 2:
+            # Log all borehole warnings
+            for warning in borehole_warnings:
+                data_warnings.add_warning('BOREHOLE_PROCESSING', warning, 'WARNING')
+            
+            # Skip borehole if insufficient depth data
+            if depth_from is None or depth_to is None:
+                skipped_boreholes += 1
                 continue
             
-            depth_from = depth[0:-1]
-            depth_to = depth[1:]
+            # Log which groups contributed data
+            if groups_with_data:
+                data_warnings.add_warning(
+                    'BOREHOLE_DATA_SOURCE',
+                    f"Borehole {borehole_id}: Data found in groups: {', '.join(groups_with_data)}",
+                    'INFO'
+                )
+            else:
+                data_warnings.add_warning(
+                    'NO_GROUP_DATA',
+                    f"Borehole {borehole_id}: No data found in any selected groups",
+                    'WARNING'
+                )
+            
+            processed_boreholes += 1
             
             # Fill in the dataframe
             for d in range(len(depth_to)):
@@ -427,7 +716,23 @@ def combine_ags_data(uploaded_excel_files, selected_groups=None):
                 df.loc[(df.WETH_GRAD == 'IV/V') | (df.WETH_GRAD == 'V/IV'), 'WETH'] = 'V'
                 df.loc[(df.WETH_GRAD == 'V/VI') | (df.WETH_GRAD == 'VI/V'), 'WETH'] = 'VI'
     
-    return df
+    # Add final metrics
+    data_warnings.add_metric('total_files', total_files)
+    data_warnings.add_metric('total_boreholes', total_boreholes)
+    data_warnings.add_metric('processed_boreholes', processed_boreholes)
+    data_warnings.add_metric('skipped_boreholes', skipped_boreholes)
+    data_warnings.add_metric('total_depth_intervals', len(df))
+    data_warnings.add_metric('groups_selected', ', '.join(group_list))
+    
+    # Add summary warning if boreholes were skipped
+    if skipped_boreholes > 0:
+        data_warnings.add_warning(
+            'DATA_LOSS_SUMMARY',
+            f"ATTENTION: {skipped_boreholes} out of {total_boreholes} boreholes were skipped due to insufficient depth data",
+            'WARNING'
+        )
+    
+    return df, data_warnings
 
 
 # ============================================================================
