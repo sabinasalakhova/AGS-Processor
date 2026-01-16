@@ -19,6 +19,9 @@ import os
 from io import BytesIO
 import base64
 
+# Debug mode - set to False in production
+DEBUG_MODE = os.environ.get('AGS_DEBUG', 'False').lower() == 'true'
+
 # Import core processing modules
 from ags_core import (
     AGS4_to_dataframe,
@@ -271,8 +274,9 @@ elif st.session_state.page == 'AGS to Excel':
                             
                         except Exception as e:
                             st.error(f"Error processing files: {str(e)}")
-                            import traceback
-                            st.code(traceback.format_exc())
+                            if DEBUG_MODE:
+                                import traceback
+                                st.code(traceback.format_exc())
         
         # Download button
         if hasattr(st.session_state, 'processed_data'):
@@ -401,8 +405,9 @@ elif st.session_state.page == 'Combine Data':
                         
                     except Exception as e:
                         st.error(f"Error combining data: {str(e)}")
-                        import traceback
-                        st.code(traceback.format_exc())
+                        if DEBUG_MODE:
+                            import traceback
+                            st.code(traceback.format_exc())
         
         # Download button
         if hasattr(st.session_state, 'combined_data'):

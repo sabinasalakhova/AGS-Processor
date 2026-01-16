@@ -390,21 +390,25 @@ def _create_depth_intervals(all_depths, borehole_id):
     """
     warnings = []
     
+    # First check the original data for ordering issues and duplicates
+    # before any processing
+    if len(all_depths) > 1:
+        # Check for duplicates in original data
+        original_duplicates = [d for d in set(all_depths) if all_depths.count(d) > 1]
+        if original_duplicates:
+            warnings.append(f"Borehole {borehole_id}: Found duplicate depths in source data: {original_duplicates}")
+        
+        # Check for ordering issues in original data
+        sorted_depths = sorted([x for x in all_depths if str(x) != 'nan'])
+        original_depths = [x for x in all_depths if str(x) != 'nan']
+        if sorted_depths != original_depths and len(sorted_depths) == len(original_depths):
+            warnings.append(f"Borehole {borehole_id}: Depths in source data are not in sequential order")
+    
     # Remove NaN values and create unique sorted depths
     depths = list(set(all_depths))
     depths.sort()
     depth = [x for x in depths if str(x) != 'nan']
     depth.sort()
-    
-    # Check for duplicate consecutive depths
-    duplicates = [depth[i] for i in range(len(depth)-1) if depth[i] == depth[i+1]]
-    if duplicates:
-        warnings.append(f"Borehole {borehole_id}: Found consecutive duplicate depths: {duplicates}")
-    
-    # Validate depth ordering
-    for i in range(len(depth)-1):
-        if depth[i] > depth[i+1]:
-            warnings.append(f"Borehole {borehole_id}: Depth ordering error at {depth[i]} > {depth[i+1]}")
     
     if len(depth) < 2:
         warnings.append(f"Borehole {borehole_id}: Insufficient depth points ({len(depth)} found, minimum 2 required) - SKIPPED")
@@ -413,7 +417,7 @@ def _create_depth_intervals(all_depths, borehole_id):
     depth_from = depth[0:-1]
     depth_to = depth[1:]
     
-    # Check for zero-length intervals
+    # Check for zero-length intervals (shouldn't happen after set() but check anyway)
     zero_intervals = [(depth_from[i], depth_to[i]) for i in range(len(depth_from)) 
                       if depth_to[i] - depth_from[i] <= 0]
     if zero_intervals:
