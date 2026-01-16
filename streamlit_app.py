@@ -227,14 +227,52 @@ elif st.session_state.page == 'AGS to Excel':
                     with st.spinner("Processing AGS files..."):
                         try:
                             # Process files
-                            result_df = concat_ags_files(uploaded_files, giu_number)
+                            result_df, data_warnings = concat_ags_files(uploaded_files, giu_number)
                             
                             # Store in session state
                             st.session_state.processed_data = result_df
+                            st.session_state.data_warnings = data_warnings
+                            
                             st.success("✅ Files concatenated successfully!")
+                            
+                            # Display metrics
+                            if data_warnings.get_metrics():
+                                st.subheader("📊 Processing Summary")
+                                metrics = data_warnings.get_metrics()
+                                col_m1, col_m2, col_m3 = st.columns(3)
+                                with col_m1:
+                                    st.metric("Files Processed", metrics.get('files_processed', 0))
+                                with col_m2:
+                                    st.metric("Groups Found", metrics.get('groups_found', 0))
+                                with col_m3:
+                                    st.metric("Groups with Data", metrics.get('groups_with_data', 0))
+                            
+                            # Display warnings if any
+                            if data_warnings.has_warnings():
+                                warnings_list = data_warnings.get_warnings()
+                                errors = [w for w in warnings_list if w['severity'] == 'ERROR']
+                                warnings = [w for w in warnings_list if w['severity'] == 'WARNING']
+                                infos = [w for w in warnings_list if w['severity'] == 'INFO']
+                                
+                                if errors:
+                                    with st.expander(f"⚠️ Errors ({len(errors)})", expanded=True):
+                                        for err in errors:
+                                            st.error(f"**{err['category']}**: {err['message']}")
+                                
+                                if warnings:
+                                    with st.expander(f"⚡ Warnings ({len(warnings)})", expanded=False):
+                                        for warn in warnings:
+                                            st.warning(f"**{warn['category']}**: {warn['message']}")
+                                
+                                if infos:
+                                    with st.expander(f"ℹ️ Information ({len(infos)})", expanded=False):
+                                        for info in infos:
+                                            st.info(f"**{info['category']}**: {info['message']}")
                             
                         except Exception as e:
                             st.error(f"Error processing files: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
         
         # Download button
         if hasattr(st.session_state, 'processed_data'):
@@ -304,14 +342,58 @@ elif st.session_state.page == 'Combine Data':
                 with st.spinner("Combining data..."):
                     try:
                         # Combine data
-                        combined_df = combine_ags_data(
+                        combined_df, data_warnings = combine_ags_data(
                             uploaded_excel_files, 
                             selected_groups if selected_groups else None
                         )
                         
                         # Store in session state
                         st.session_state.combined_data = combined_df
+                        st.session_state.combine_warnings = data_warnings
+                        
                         st.success("✅ Data combined successfully!")
+                        
+                        # Display metrics
+                        if data_warnings.get_metrics():
+                            st.subheader("📊 Processing Summary")
+                            metrics = data_warnings.get_metrics()
+                            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                            with col_m1:
+                                st.metric("Total Boreholes", metrics.get('total_boreholes', 0))
+                            with col_m2:
+                                st.metric("Processed", metrics.get('processed_boreholes', 0))
+                            with col_m3:
+                                st.metric("Skipped", metrics.get('skipped_boreholes', 0))
+                            with col_m4:
+                                st.metric("Depth Intervals", metrics.get('total_depth_intervals', 0))
+                        
+                        # Display warnings if any
+                        if data_warnings.has_warnings():
+                            warnings_list = data_warnings.get_warnings()
+                            errors = [w for w in warnings_list if w['severity'] == 'ERROR']
+                            warnings = [w for w in warnings_list if w['severity'] == 'WARNING']
+                            infos = [w for w in warnings_list if w['severity'] == 'INFO']
+                            
+                            if errors:
+                                with st.expander(f"⚠️ Errors ({len(errors)})", expanded=True):
+                                    for err in errors[:20]:  # Limit to first 20
+                                        st.error(f"**{err['category']}**: {err['message']}")
+                                    if len(errors) > 20:
+                                        st.info(f"... and {len(errors) - 20} more errors")
+                            
+                            if warnings:
+                                with st.expander(f"⚡ Warnings ({len(warnings)})", expanded=False):
+                                    for warn in warnings[:20]:  # Limit to first 20
+                                        st.warning(f"**{warn['category']}**: {warn['message']}")
+                                    if len(warnings) > 20:
+                                        st.info(f"... and {len(warnings) - 20} more warnings")
+                            
+                            if infos and len(infos) <= 50:  # Only show info if reasonable number
+                                with st.expander(f"ℹ️ Information ({len(infos)})", expanded=False):
+                                    for info in infos[:20]:
+                                        st.info(f"**{info['category']}**: {info['message']}")
+                                    if len(infos) > 20:
+                                        st.info(f"... and {len(infos) - 20} more information messages")
                         
                         # Show preview
                         st.markdown("**Preview of Combined Data:**")
@@ -319,6 +401,8 @@ elif st.session_state.page == 'Combine Data':
                         
                     except Exception as e:
                         st.error(f"Error combining data: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
         
         # Download button
         if hasattr(st.session_state, 'combined_data'):
